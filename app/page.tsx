@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { DesignCanvas } from "@/components/canvas/design-canvas";
-import { ChatBox } from "@/components/chat/chatbox";
-import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { ChevronLeft } from "lucide-react";
+import { useState } from "react";
+import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
+import { KonvaDesignCanvas } from "@/components/canvas/konva-design-canvas";
+import { ChatBox } from "@/components/chat/chatbox";
 
 export default function Home() {
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
@@ -13,13 +13,14 @@ export default function Home() {
     <div className="relative flex h-screen w-screen">
       {/* Left - Canvas Area (takes remaining space) */}
       <div className="flex-1 overflow-hidden">
-        <DesignCanvas />
+        <KonvaDesignCanvas />
       </div>
 
       {/* Right - ChatBox fixed on the right side */}
       {isChatCollapsed ? (
         <div className="flex-shrink-0 border-l border-zinc-200 dark:border-zinc-800">
           <button
+            type="button"
             onClick={() => setIsChatCollapsed(false)}
             className="h-full w-8 flex items-center justify-center hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
             aria-label="Expand chat"

@@ -1,8 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Moveable from "react-moveable";
-import { useCanvasStore, CANVAS_CONFIG } from "@/lib/store/canvas-store";
+import Moveable, {
+  type OnDrag,
+  type OnDragEnd,
+  type OnResize,
+  type OnResizeEnd,
+  type OnRotate,
+  type OnRotateEnd,
+  type OnScale,
+  type OnScaleEnd,
+} from "react-moveable";
+import { CANVAS_CONFIG, type CanvasElement, useCanvasStore } from "@/lib/store/canvas-store";
 import { CanvasElementRenderer } from "./canvas-element-renderer";
 
 interface DesignCanvasProps {
@@ -10,17 +19,11 @@ interface DesignCanvasProps {
 }
 
 export function DesignCanvas({ className }: DesignCanvasProps) {
-  const {
-    elements,
-    selectedIds,
-    setSelectedIds,
-    updateElementStyle,
-    updateElement,
-    getElement,
-  } = useCanvasStore();
+  const { elements, selectedIds, setSelectedIds, updateElement, getElement } = useCanvasStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const moveableRef = useRef<Moveable | null>(null);
   const [targetElements, setTargetElements] = useState<HTMLElement[]>([]);
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number; scale: number }>({
     width: CANVAS_CONFIG.width,
@@ -75,106 +78,244 @@ export function DesignCanvas({ className }: DesignCanvasProps) {
     return () => clearTimeout(timer);
   }, [selectedIds]);
 
-  // Handle drag - use drag.transform which preserves original transform
-  const handleDrag = useCallback((params: any) => {
-    const { target, drag } = params;
-    target.style.transform = drag.transform;
-  }, []);
+  // CRITICAL: Force Moveable to update rect when elements change
+  // This fixes the "Ghost Box" problem where control box gets out of sync
+  useEffect(() => {
+    if (moveableRef.current && targetElements.length > 0) {
+      moveableRef.current.updateRect();
+    }
+  }, [targetElements]);
 
-  // Handle drag end
+  // Handle drag - apply offset with zoom compensation
+  const handleDrag = useCallback(
+    (params: OnDrag) => {
+      const { target, beforeTranslate } = params;
+      const elementId = (target as HTMLElement).getAttribute("data-element-id");
+      if (!elementId) return;
+
+      const element = getElement(elementId);
+      if (!element) return;
+
+      // Get current rotation and scale
+      const rotation = element.rotation ?? 0;
+      const scaleX = element.scaleX ?? 1;
+      const scaleY = element.scaleY ?? 1;
+
+      // Key insight: element.x/y are in canvas coordinates
+      // beforeTranslate is in screen coordinates (already scaled)
+      // To set inline transform on a scaled element, we need to:
+      // 1. Convert canvas position to screen coordinates (multiply by scale)
+      // 2. Add the drag offset (beforeTranslate is already in screen coords)
+      const screenX = element.x * canvasSize.scale;
+      const screenY = element.y * canvasSize.scale;
+      const totalX = screenX + beforeTranslate[0];
+      const totalY = screenY + beforeTranslate[1];
+
+      (target as HTMLElement).style.transform =
+        `translate(${totalX}px, ${totalY}px) rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`;
+    },
+    [getElement, canvasSize.scale]
+  );
+
   const handleDragEnd = useCallback(
-    (params: any) => {
+    (params: OnDragEnd) => {
       const { lastEvent, target } = params;
       if (!lastEvent || !target) return;
 
-      const elementId = target.getAttribute("data-element-id");
+      const elementId = (target as HTMLElement).getAttribute("data-element-id");
       if (!elementId) return;
 
-      // Get current element data from store (not from closure)
       const element = getElement(elementId);
       if (!element) return;
 
-      const currentLeft = parseInt(element.style.left) || 0;
-      const currentTop = parseInt(element.style.top) || 0;
+      // lastEvent.translate is in screen coordinates
+      // Convert to canvas coordinates by dividing by scale
+      const newX = element.x + lastEvent.translate[0] / canvasSize.scale;
+      const newY = element.y + lastEvent.translate[1] / canvasSize.scale;
 
-      // Calculate new position (zoom handles scale conversion)
-      const newLeft = currentLeft + lastEvent.translate[0];
-      const newTop = currentTop + lastEvent.translate[1];
-
-      // Update store
-      updateElementStyle(elementId, {
-        left: `${newLeft}px`,
-        top: `${newTop}px`,
+      updateElement(elementId, {
+        x: newX,
+        y: newY,
       });
 
-      // Reset transform - React will re-render with new left/top
-      target.style.transform = element.style.transform || "";
+      // Transform will be updated by React re-render with new x, y
     },
-    [updateElementStyle, getElement]
+    [updateElement, getElement, canvasSize.scale]
   );
 
-  // Handle resize
-  const handleResize = useCallback((params: any) => {
-    const { target, width, height, drag } = params;
-    target.style.width = `${width}px`;
-    target.style.height = `${height}px`;
-    target.style.transform = drag.transform;
-  }, []);
+  // Handle resize - build complete transform with zoom compensation
+  const handleResize = useCallback(
+    (params: OnResize) => {
+      const { target, width, height } = params;
+      const beforeTranslate = (params as { beforeTranslate?: [number, number] }).beforeTranslate;
+      const elementId = (target as HTMLElement).getAttribute("data-element-id");
+      if (!elementId) return;
+      const element = getElement(elementId);
 
-  // Handle resize end
+      (target as HTMLElement).style.width = `${width}px`;
+      (target as HTMLElement).style.height = `${height}px`;
+
+      if (element) {
+        const rotation = element.rotation ?? 0;
+        const scaleX = element.scaleX ?? 1;
+        const scaleY = element.scaleY ?? 1;
+        // Convert canvas position to screen coordinates and add drag offset
+        const screenX = element.x * canvasSize.scale;
+        const screenY = element.y * canvasSize.scale;
+        const totalX = screenX + (beforeTranslate?.[0] || 0);
+        const totalY = screenY + (beforeTranslate?.[1] || 0);
+        (target as HTMLElement).style.transform =
+          `translate(${totalX}px, ${totalY}px) rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`;
+      }
+    },
+    [getElement, canvasSize.scale]
+  );
+
   const handleResizeEnd = useCallback(
-    (params: any) => {
+    (params: OnResizeEnd) => {
       const { lastEvent, target } = params;
       if (!lastEvent || !target) return;
 
-      const elementId = target.getAttribute("data-element-id");
+      const elementId = (target as HTMLElement).getAttribute("data-element-id");
       if (!elementId) return;
 
       const element = getElement(elementId);
       if (!element) return;
 
-      const currentWidth = parseInt(element.style.width) || 0;
-      const currentHeight = parseInt(element.style.height) || 0;
+      // delta is in screen coordinates, convert to canvas coordinates
+      const newWidth = Math.max(50, element.width + lastEvent.delta[0] / canvasSize.scale);
+      const newHeight = Math.max(50, element.height + lastEvent.delta[1] / canvasSize.scale);
 
-      updateElementStyle(elementId, {
-        width: `${Math.max(50, currentWidth + lastEvent.delta[0])}px`,
-        height: `${Math.max(50, currentHeight + lastEvent.delta[1])}px`,
-      });
+      const updates: Partial<CanvasElement> = {
+        width: newWidth,
+        height: newHeight,
+      };
 
-      target.style.transform = element.style.transform || "";
+      // If there was drag during resize, update position (convert screen to canvas coords)
+      if (lastEvent.drag) {
+        updates.x = element.x + lastEvent.drag.translate[0] / canvasSize.scale;
+        updates.y = element.y + lastEvent.drag.translate[1] / canvasSize.scale;
+      }
+
+      updateElement(elementId, updates);
     },
-    [updateElementStyle, getElement]
+    [updateElement, getElement, canvasSize.scale]
   );
 
-  // Handle rotate
-  const handleRotate = useCallback((params: any) => {
-    const { target, transform } = params;
-    target.style.transform = transform;
-  }, []);
+  // Handle rotate - build complete transform
+  const handleRotate = useCallback(
+    (params: OnRotate) => {
+      const { target, transform, drag } = params;
+      const beforeTranslate = (params as { beforeTranslate?: [number, number] }).beforeTranslate;
+      const elementId = (target as HTMLElement).getAttribute("data-element-id");
+      if (!elementId) return;
+      const element = getElement(elementId);
 
-  // Handle rotate end
+      if (element && drag?.transform) {
+        (target as HTMLElement).style.transform = drag.transform;
+      } else if (element) {
+        const scaleX = element.scaleX ?? 1;
+        const scaleY = element.scaleY ?? 1;
+        // Convert canvas position to screen coordinates and add drag offset
+        const screenX = element.x * canvasSize.scale;
+        const screenY = element.y * canvasSize.scale;
+        const totalX = screenX + (beforeTranslate?.[0] || 0);
+        const totalY = screenY + (beforeTranslate?.[1] || 0);
+        (target as HTMLElement).style.transform =
+          `translate(${totalX}px, ${totalY}px) ${transform} scale(${scaleX}, ${scaleY})`;
+      } else {
+        (target as HTMLElement).style.transform = transform;
+      }
+    },
+    [getElement, canvasSize.scale]
+  );
+
   const handleRotateEnd = useCallback(
-    (params: any) => {
+    (params: OnRotateEnd) => {
       const { lastEvent, target } = params;
       if (!lastEvent || !target) return;
 
-      const elementId = target.getAttribute("data-element-id");
+      const elementId = (target as HTMLElement).getAttribute("data-element-id");
       if (!elementId) return;
 
       const element = getElement(elementId);
       if (!element) return;
 
-      const currentRotation = element.style.transform?.match(/rotate\(([-\d.]+)deg\)/)?.[1]
-        ? parseFloat(element.style.transform.match(/rotate\(([-\d.]+)deg\)/)![1])
-        : 0;
-
+      const currentRotation = element.rotation ?? 0;
       const newRotation = currentRotation + lastEvent.rotate;
 
-      updateElementStyle(elementId, {
-        transform: `rotate(${newRotation}deg)`,
-      });
+      const updates: Partial<CanvasElement> = {
+        rotation: newRotation,
+      };
+
+      // If there was drag during rotate, also update position (convert screen to canvas coords)
+      if (lastEvent.drag) {
+        updates.x = element.x + lastEvent.drag.translate[0] / canvasSize.scale;
+        updates.y = element.y + lastEvent.drag.translate[1] / canvasSize.scale;
+      }
+
+      updateElement(elementId, updates);
     },
-    [updateElementStyle, getElement]
+    [updateElement, getElement, canvasSize.scale]
+  );
+
+  // Handle scale - build complete transform
+  const handleScale = useCallback(
+    (params: OnScale) => {
+      const { target, delta, drag } = params;
+      const beforeTranslate = (params as { beforeTranslate?: [number, number] }).beforeTranslate;
+      const elementId = (target as HTMLElement).getAttribute("data-element-id");
+      if (!elementId) return;
+      const element = getElement(elementId);
+
+      if (element && drag?.transform) {
+        (target as HTMLElement).style.transform = drag.transform;
+      } else if (element) {
+        const rotation = element.rotation ?? 0;
+        const currentScaleX = element.scaleX ?? 1;
+        const currentScaleY = element.scaleY ?? 1;
+        const newScaleX = currentScaleX * delta[0];
+        const newScaleY = currentScaleY * delta[1];
+        // Convert canvas position to screen coordinates and add drag offset
+        const screenX = element.x * canvasSize.scale;
+        const screenY = element.y * canvasSize.scale;
+        const totalX = screenX + (beforeTranslate?.[0] || 0);
+        const totalY = screenY + (beforeTranslate?.[1] || 0);
+        (target as HTMLElement).style.transform =
+          `translate(${totalX}px, ${totalY}px) rotate(${rotation}deg) scale(${newScaleX}, ${newScaleY})`;
+      }
+    },
+    [getElement, canvasSize.scale]
+  );
+
+  const handleScaleEnd = useCallback(
+    (params: OnScaleEnd) => {
+      const { lastEvent, target } = params;
+      if (!lastEvent || !target) return;
+
+      const elementId = (target as HTMLElement).getAttribute("data-element-id");
+      if (!elementId) return;
+
+      const element = getElement(elementId);
+      if (!element) return;
+
+      const currentScaleX = element.scaleX ?? 1;
+      const currentScaleY = element.scaleY ?? 1;
+
+      const updates: Partial<CanvasElement> = {
+        scaleX: Math.max(0.1, currentScaleX * lastEvent.delta[0]),
+        scaleY: Math.max(0.1, currentScaleY * lastEvent.delta[1]),
+      };
+
+      // If there was drag during scale, also update position (convert screen to canvas coords)
+      if (lastEvent.drag) {
+        updates.x = element.x + lastEvent.drag.translate[0] / canvasSize.scale;
+        updates.y = element.y + lastEvent.drag.translate[1] / canvasSize.scale;
+      }
+
+      updateElement(elementId, updates);
+    },
+    [updateElement, getElement, canvasSize.scale]
   );
 
   // Handle click on canvas to deselect
@@ -187,12 +328,27 @@ export function DesignCanvas({ className }: DesignCanvasProps) {
     [setSelectedIds]
   );
 
+  // Handle keyboard events for canvas
+  const handleCanvasKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        if (e.target === contentRef.current) {
+          setSelectedIds([]);
+        }
+      }
+    },
+    [setSelectedIds]
+  );
+
   // Handle delete key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === "Delete" || e.key === "Backspace") &&
-          selectedIds.length > 0 &&
-          document.activeElement?.tagName !== "INPUT") {
+      if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        selectedIds.length > 0 &&
+        document.activeElement?.tagName !== "INPUT"
+      ) {
         selectedIds.forEach((id) => {
           useCanvasStore.getState().deleteElement(id);
         });
@@ -209,9 +365,7 @@ export function DesignCanvas({ className }: DesignCanvasProps) {
       ref={containerRef}
       className={`relative h-full w-full overflow-auto bg-zinc-100 dark:bg-zinc-900 ${className}`}
     >
-      {/* Canvas Container */}
       <div className="flex min-h-full items-center justify-center p-4 sm:p-8">
-        {/* Scaled Canvas Container */}
         <div
           className="relative bg-white shadow-2xl dark:bg-zinc-800"
           style={{
@@ -219,7 +373,7 @@ export function DesignCanvas({ className }: DesignCanvasProps) {
             height: `${canvasSize.height}px`,
           }}
         >
-          {/* Content Area with scale transform */}
+          {/* biome-ignore lint/a11y/useSemanticElements: Canvas container needs to be a div for layout */}
           <div
             ref={contentRef}
             className="relative overflow-hidden"
@@ -230,6 +384,10 @@ export function DesignCanvas({ className }: DesignCanvasProps) {
               transformOrigin: "top left",
             }}
             onClick={handleCanvasClick}
+            onKeyDown={handleCanvasKeyDown}
+            role="button"
+            tabIndex={0}
+            aria-label="Canvas - click to deselect"
           >
             {elements.length === 0 ? (
               <div className="flex h-full items-center justify-center">
@@ -256,12 +414,14 @@ export function DesignCanvas({ className }: DesignCanvasProps) {
             {/* Moveable Control */}
             {targetElements.length > 0 && (
               <Moveable
+                ref={moveableRef}
                 key={`moveable-${selectedIds.join("-")}`}
                 target={targetElements}
                 zoom={canvasSize.scale}
                 draggable
                 resizable
                 rotatable
+                scalable
                 origin={false}
                 keepRatio={false}
                 onDrag={handleDrag}
@@ -270,6 +430,8 @@ export function DesignCanvas({ className }: DesignCanvasProps) {
                 onResizeEnd={handleResizeEnd}
                 onRotate={handleRotate}
                 onRotateEnd={handleRotateEnd}
+                onScale={handleScale}
+                onScaleEnd={handleScaleEnd}
                 renderDirections={["nw", "n", "ne", "w", "e", "sw", "s", "se"]}
                 className="!z-[9999]"
               />

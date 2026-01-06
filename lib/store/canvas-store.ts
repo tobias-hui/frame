@@ -1,47 +1,45 @@
-import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
+import { create } from "zustand";
 
-// 完全对齐 CSS 属性的数据结构
-// AI 可以直接生成这些样式属性来控制元素
+// 简化的元素数据结构 - 分离存储各个属性
 export interface CanvasElement {
   id: string;
 
-  // CSS 属性对齐 - 用于 AI 生成
-  style: {
-    // Position
-    left: string;  // e.g., "100px"
-    top: string;   // e.g., "200px"
-    // Size
-    width: string;   // e.g., "300px"
-    height: string;  // e.g., "200px" or "auto"
-    // Transform (for rotation, scale)
-    transform?: string;  // e.g., "rotate(45deg) scale(1.5)"
-    // Z-index
-    zIndex?: number;
-    // Opacity
-    opacity?: number;
-    // Border radius
-    borderRadius?: string;
-    // Background
-    backgroundColor?: string;
-    // Border
-    border?: string;
-    // Text styles
-    color?: string;
-    fontSize?: string;
-    fontWeight?: string;
-    textAlign?: string;
-    fontFamily?: string;
-    lineHeight?: string;
-    letterSpacing?: string;
-  };
+  // 位置 (绝对定位)
+  x: number;
+  y: number;
+
+  // 尺寸
+  width: number;
+  height: number;
+
+  // 变换 (分离存储)
+  rotation?: number; // 旋转角度 (度)
+  scaleX?: number; // X轴缩放
+  scaleY?: number; // Y轴缩放
+
+  // 层级和透明度
+  zIndex?: number;
+  opacity?: number;
+
+  // 视觉样式
+  backgroundColor?: string;
+  borderRadius?: string;
+  border?: string;
+
+  // 文本相关样式
+  color?: string;
+  fontSize?: string;
+  fontWeight?: string;
+  textAlign?: string;
+  fontFamily?: string;
 
   // 元素类型和内容
   type: "text" | "image" | "shape" | "container" | "button";
-  content?: string;  // text content
-  src?: string;      // image source
+  content?: string;
+  src?: string;
 
-  // 嵌套子元素（可选，支持容器类型）
+  // 嵌套子元素
   children?: CanvasElement[];
 
   // 元素属性
@@ -58,57 +56,43 @@ export const CANVAS_CONFIG = {
 } as const;
 
 interface CanvasStore {
-  // 所有元素
   elements: CanvasElement[];
-
-  // 当前选中的元素 ID 列表（支持多选）
   selectedIds: string[];
+  clipboard: CanvasElement[] | null;
 
-  // 当前操作的元素（用于 Moveable）
-  targetElements: CanvasElement[];
-
-  // 添加元素
   addElement: (element: Omit<CanvasElement, "id">) => void;
-
-  // 更新元素（AI 可以直接调用）
   updateElement: (id: string, updates: Partial<CanvasElement>) => void;
-
-  // 批量更新元素
-  updateElements: (ids: string[], updates: Partial<CanvasElement>) => void;
-
-  // 删除元素
   deleteElement: (id: string) => void;
-
-  // 选中/取消选中
   setSelectedIds: (ids: string[]) => void;
-
-  // 清空画布
   clearCanvas: () => void;
-
-  // 更新元素的样式（AI 友好接口）
-  updateElementStyle: (
-    id: string,
-    style: Partial<CanvasElement["style"]>
-  ) => void;
-
-  // 批量更新样式
-  batchUpdateStyles: (
-    updates: Array<{ id: string; style: Partial<CanvasElement["style"]> }>
-  ) => void;
-
-  // 获取元素
   getElement: (id: string) => CanvasElement | undefined;
+
+  // Copy & Paste
+  copyElements: (ids: string[]) => void;
+  pasteElements: () => void;
+  duplicateElements: (ids: string[]) => void;
+
+  // Layer management
+  bringToFront: (id: string) => void;
+  sendToBack: (id: string) => void;
+  moveLayer: (id: string, direction: "up" | "down") => void;
 }
 
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
   elements: [],
   selectedIds: [],
-  targetElements: [],
+  clipboard: null,
 
   addElement: (element) => {
     const newElement: CanvasElement = {
       ...element,
       id: uuidv4(),
+      // 默认值
+      rotation: element.rotation ?? 0,
+      scaleX: element.scaleX ?? 1,
+      scaleY: element.scaleY ?? 1,
+      opacity: element.opacity ?? 1,
+      zIndex: element.zIndex ?? 1,
     };
     set((state) => ({
       elements: [...state.elements, newElement],
@@ -118,17 +102,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   updateElement: (id, updates) => {
     set((state) => ({
-      elements: state.elements.map((el) =>
-        el.id === id ? { ...el, ...updates } : el
-      ),
-    }));
-  },
-
-  updateElements: (ids, updates) => {
-    set((state) => ({
-      elements: state.elements.map((el) =>
-        ids.includes(el.id) ? { ...el, ...updates } : el
-      ),
+      elements: state.elements.map((el) => (el.id === id ? { ...el, ...updates } : el)),
     }));
   },
 
@@ -141,43 +115,123 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   setSelectedIds: (ids) => {
     set({ selectedIds: ids });
-    // 更新 targetElements
-    const { elements } = get();
-    set({
-      targetElements: elements.filter((el) => ids.includes(el.id)),
-    });
   },
 
   clearCanvas: () => {
-    set({ elements: [], selectedIds: [], targetElements: [] });
-  },
-
-  updateElementStyle: (id, style) => {
-    set((state) => ({
-      elements: state.elements.map((el) =>
-        el.id === id
-          ? { ...el, style: { ...el.style, ...style } }
-          : el
-      ),
-    }));
-  },
-
-  batchUpdateStyles: (updates) => {
-    set((state) => ({
-      elements: state.elements.map((el) => {
-        const update = updates.find((u) => u.id === el.id);
-        if (update) {
-          return {
-            ...el,
-            style: { ...el.style, ...update.style },
-          };
-        }
-        return el;
-      }),
-    }));
+    set({ elements: [], selectedIds: [] });
   },
 
   getElement: (id) => {
     return get().elements.find((el) => el.id === id);
+  },
+
+  // Copy & Paste
+  copyElements: (ids) => {
+    const elements = get().elements;
+    const toCopy = ids
+      .map((id) => elements.find((el) => el.id === id))
+      .filter((el): el is CanvasElement => el !== undefined);
+    set({ clipboard: toCopy });
+  },
+
+  pasteElements: () => {
+    const { clipboard, elements } = get();
+    if (!clipboard || clipboard.length === 0) return;
+
+    // Offset pasted elements by 20px
+    const newElements = clipboard.map((el) => {
+      const newEl: CanvasElement = {
+        ...el,
+        id: uuidv4(),
+        x: el.x + 20,
+        y: el.y + 20,
+        zIndex: Math.max(...elements.map((e) => e.zIndex || 0)) + 1,
+      };
+      return newEl;
+    });
+
+    set((state) => ({
+      elements: [...state.elements, ...newElements],
+      selectedIds: newElements.map((el) => el.id),
+    }));
+  },
+
+  duplicateElements: (ids) => {
+    const { elements } = get();
+    const toDuplicate = ids
+      .map((id) => elements.find((el) => el.id === id))
+      .filter((el): el is CanvasElement => el !== undefined);
+
+    // Offset duplicated elements by 20px
+    const newElements = toDuplicate.map((el) => {
+      const newEl: CanvasElement = {
+        ...el,
+        id: uuidv4(),
+        x: el.x + 20,
+        y: el.y + 20,
+        zIndex: Math.max(...elements.map((e) => e.zIndex || 0)) + 1,
+      };
+      return newEl;
+    });
+
+    set((state) => ({
+      elements: [...state.elements, ...newElements],
+      selectedIds: newElements.map((el) => el.id),
+    }));
+  },
+
+  // Layer management
+  bringToFront: (id) => {
+    const { elements } = get();
+    const element = elements.find((el) => el.id === id);
+    if (!element) return;
+
+    const maxZ = Math.max(...elements.map((el) => el.zIndex || 0));
+    set((state) => ({
+      elements: state.elements.map((el) => (el.id === id ? { ...el, zIndex: maxZ + 1 } : el)),
+    }));
+  },
+
+  sendToBack: (id) => {
+    const { elements } = get();
+    const element = elements.find((el) => el.id === id);
+    if (!element) return;
+
+    const minZ = Math.min(...elements.map((el) => el.zIndex || 0));
+    set((state) => ({
+      elements: state.elements.map((el) => (el.id === id ? { ...el, zIndex: minZ - 1 } : el)),
+    }));
+  },
+
+  moveLayer: (id, direction) => {
+    const { elements } = get();
+    const element = elements.find((el) => el.id === id);
+    if (!element) return;
+
+    const currentIndex = elements.findIndex((el) => el.id === id);
+    if (currentIndex === -1) return;
+
+    const sortedElements = [...elements].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+    const currentZ = element.zIndex || 0;
+
+    if (direction === "up") {
+      // Find next higher zIndex
+      const aboveElements = sortedElements.filter((el) => (el.zIndex || 0) > currentZ);
+      if (aboveElements.length > 0) {
+        const nextZ = Math.min(...aboveElements.map((el) => el.zIndex || 0));
+        set((state) => ({
+          elements: state.elements.map((el) => (el.id === id ? { ...el, zIndex: nextZ } : el)),
+        }));
+      }
+    } else {
+      // Find next lower zIndex
+      const belowElements = sortedElements.filter((el) => (el.zIndex || 0) < currentZ);
+      if (belowElements.length > 0) {
+        const prevZ = Math.max(...belowElements.map((el) => el.zIndex || 0));
+        set((state) => ({
+          elements: state.elements.map((el) => (el.id === id ? { ...el, zIndex: prevZ } : el)),
+        }));
+      }
+    }
   },
 }));

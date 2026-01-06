@@ -48,6 +48,7 @@ export function ChatBox({ className, onToggleCollapse }: ChatBoxProps) {
       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
         <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Chat</h2>
         <button
+          type="button"
           onClick={onToggleCollapse}
           className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-colors"
           aria-label="Collapse chat"
@@ -111,6 +112,7 @@ export function ChatBox({ className, onToggleCollapse }: ChatBoxProps) {
               <AtSign className="h-4 w-4" />
             </button>
             <button
+              type="button"
               onClick={handleSend}
               disabled={!input.trim()}
               className="rounded bg-blue-600 p-1.5 text-white transition-colors hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"

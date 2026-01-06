@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { CanvasElement } from "@/lib/store/canvas-store";
+import type { CanvasElement } from "@/lib/store/canvas-store";
 
 interface CanvasElementRendererProps {
   element: CanvasElement;
@@ -11,19 +11,26 @@ interface CanvasElementRendererProps {
 
 export const CanvasElementRenderer = memo(
   ({ element, isSelected, onSelect }: CanvasElementRendererProps) => {
-    // Base styles from the store (CSS-aligned)
+    // Build CSS transform - use translate for position instead of left/top
+    const rotation = element.rotation ?? 0;
+    const scaleX = element.scaleX ?? 1;
+    const scaleY = element.scaleY ?? 1;
+    const transform = `translate(${element.x}px, ${element.y}px) rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`;
+
+    // Base styles - using transform for position (no left/top)
     const baseStyle: React.CSSProperties = {
       position: "absolute",
-      left: element.style.left,
-      top: element.style.top,
-      width: element.style.width,
-      height: element.style.height,
-      transform: element.style.transform,
-      zIndex: element.style.zIndex ?? 1,
-      opacity: element.style.opacity ?? 1,
-      borderRadius: element.style.borderRadius,
-      backgroundColor: element.style.backgroundColor,
-      border: element.style.border,
+      left: "0px",
+      top: "0px",
+      width: `${element.width}px`,
+      height: `${element.height}px`,
+      transform,
+      transformOrigin: "0 0", // Important: translate(x,y) positions top-left corner
+      zIndex: element.zIndex ?? 1,
+      opacity: element.opacity ?? 1,
+      borderRadius: element.borderRadius,
+      backgroundColor: element.backgroundColor,
+      border: element.border,
       cursor: "move",
       userSelect: "none",
     };
@@ -42,10 +49,10 @@ export const CanvasElementRenderer = memo(
             <div
               className="flex h-full w-full items-center justify-center p-2"
               style={{
-                color: element.style.color || "inherit",
-                fontSize: element.style.fontSize || "16px",
-                fontWeight: element.style.fontWeight || "normal",
-                textAlign: (element.style.textAlign || "left") as "left" | "center" | "right" | "justify",
+                color: element.color || "inherit",
+                fontSize: element.fontSize || "16px",
+                fontWeight: element.fontWeight || "normal",
+                textAlign: (element.textAlign as "left" | "center" | "right" | "justify") || "left",
               }}
             >
               {element.content || "Text"}
@@ -53,19 +60,18 @@ export const CanvasElementRenderer = memo(
           );
 
         case "image":
-          return (
-            element.src ? (
-              <img
-                src={element.src}
-                alt={element.name || "Image"}
-                className="h-full w-full object-cover pointer-events-none"
-                draggable={false}
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-zinc-200 dark:bg-zinc-700">
-                <span className="text-sm text-zinc-500">No image</span>
-              </div>
-            )
+          return element.src ? (
+            // biome-ignore lint/performance/noImgElement: Using native img for canvas element rendering where Next.js Image won't work
+            <img
+              src={element.src}
+              alt={element.name || "Image"}
+              className="h-full w-full object-cover pointer-events-none"
+              draggable={false}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-zinc-200 dark:bg-zinc-700">
+              <span className="text-sm text-zinc-500">No image</span>
+            </div>
           );
 
         case "shape":
@@ -73,8 +79,8 @@ export const CanvasElementRenderer = memo(
             <div
               className="h-full w-full"
               style={{
-                backgroundColor: element.style.backgroundColor || "#3b82f6",
-                borderRadius: element.style.borderRadius || "0px",
+                backgroundColor: element.backgroundColor || "#3b82f6",
+                borderRadius: element.borderRadius || "0px",
               }}
             />
           );
@@ -82,7 +88,6 @@ export const CanvasElementRenderer = memo(
         case "container":
           return (
             <div className="h-full w-full border-2 border-dashed border-zinc-300 dark:border-zinc-600 bg-zinc-50/50 dark:bg-zinc-800/50">
-              {/* Render nested children */}
               {element.children?.map((child) => (
                 <CanvasElementRenderer
                   key={child.id}
@@ -97,14 +102,13 @@ export const CanvasElementRenderer = memo(
         case "button":
           return (
             <button
+              type="button"
               className="h-full w-full rounded bg-blue-500 px-4 py-2 font-medium text-white hover:bg-blue-600 active:bg-blue-700"
               style={{
-                backgroundColor: element.style.backgroundColor || "#3b82f6",
-                borderRadius: element.style.borderRadius || "8px",
+                backgroundColor: element.backgroundColor || "#3b82f6",
+                borderRadius: element.borderRadius || "8px",
               }}
-              onClick={(e) => {
-                e.stopPropagation();
-              }}
+              onClick={(e) => e.stopPropagation()}
             >
               {element.content || "Button"}
             </button>
@@ -116,9 +120,12 @@ export const CanvasElementRenderer = memo(
     };
 
     return (
+      // biome-ignore lint:a11y/useSemanticElements: These are container elements rendered by Konva canvas, not interactive elements
       <div
         data-element-id={element.id}
         style={baseStyle}
+        role="presentation"
+        tabIndex={-1}
         onClick={(e) => {
           e.stopPropagation();
           onSelect();
@@ -126,6 +133,12 @@ export const CanvasElementRenderer = memo(
         onMouseDown={(e) => {
           e.stopPropagation();
           onSelect();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.stopPropagation();
+            onSelect();
+          }
         }}
       >
         {renderContent()}
