@@ -1,16 +1,26 @@
 "use client";
 
 import type Konva from "konva";
-import { useEffect, useRef } from "react";
-import { Transformer } from "react-konva";
-import type { CanvasElement } from "@/lib/store/canvas-store";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Layer, Transformer } from "react-konva";
+import type { CanvasElement, useCanvasStore } from "@/lib/store/canvas-store";
+import { SmartGuides, calculateSmartGuides, calculateSpacingGuides } from "./smart-guides";
 
 interface KonvaTransformerProps {
   selectedElements: CanvasElement[];
+  allElements: CanvasElement[];
   onTransformEnd?: (elementId: string, attrs: Partial<Konva.NodeConfig>) => void;
+  onGuidesChange?: (guides: { type: "vertical" | "horizontal"; position: number; range: [number, number] }[]) => void;
+  onDragStateChange?: (isDragging: boolean) => void;
 }
 
-export function KonvaTransformer({ selectedElements, onTransformEnd }: KonvaTransformerProps) {
+export function KonvaTransformer({
+  selectedElements,
+  allElements,
+  onTransformEnd,
+  onGuidesChange,
+  onDragStateChange,
+}: KonvaTransformerProps) {
   const transformerRef = useRef<Konva.Transformer>(null);
 
   // 更新 transformer 的选中节点
@@ -55,11 +65,67 @@ export function KonvaTransformer({ selectedElements, onTransformEnd }: KonvaTran
         // 确保所有节点都可以拖拽
         nodes.forEach((node) => {
           node.draggable(true);
-          console.log("节点配置:", {
-            id: node.id(),
-            draggable: node.draggable(),
-            dragDistance: node.dragDistance(),
-            listening: node.listening(),
+        });
+
+        // 为每个节点添加拖拽移动监听器
+        nodes.forEach((node) => {
+          node.off("dragmove.smartguides");
+          node.on("dragmove.smartguides", () => {
+            console.log("拖拽移动事件触发", {
+              hasOnGuidesChange: !!onGuidesChange,
+              hasOnDragStateChange: !!onDragStateChange,
+              selectedCount: selectedElements.length,
+            });
+
+            if (selectedElements.length === 1 && onGuidesChange && onDragStateChange) {
+              const element = selectedElements[0];
+              // 创建临时元素对象用于计算对齐
+              const tempElement = {
+                ...element,
+                x: node.x(),
+                y: node.y(),
+              };
+
+              console.log("计算对齐线", {
+                tempElement: { id: tempElement.id, x: tempElement.x, y: tempElement.y },
+                allElementsCount: allElements.length,
+              });
+
+              const { guides: newGuides, snappedPosition } = calculateSmartGuides(
+                tempElement,
+                allElements,
+                5 // 5px 吸附阈值
+              );
+
+              console.log("计算结果", {
+                guidesCount: newGuides.length,
+                guides: newGuides,
+                snappedPosition,
+              });
+
+              // 应用吸附
+              if (snappedPosition.x !== undefined || snappedPosition.y !== undefined) {
+                console.log("应用吸附", snappedPosition);
+                if (snappedPosition.x !== undefined) {
+                  node.x(snappedPosition.x);
+                }
+                if (snappedPosition.y !== undefined) {
+                  node.y(snappedPosition.y);
+                }
+                node.getLayer()?.batchDraw();
+              }
+
+              onDragStateChange(true);
+              onGuidesChange(newGuides);
+            }
+          });
+
+          node.off("dragend.smartguides");
+          node.on("dragend.smartguides", () => {
+            if (onGuidesChange && onDragStateChange) {
+              onGuidesChange([]);
+              onDragStateChange(false);
+            }
           });
         });
 
@@ -74,11 +140,16 @@ export function KonvaTransformer({ selectedElements, onTransformEnd }: KonvaTran
         cancelAnimationFrame(rafId);
       }
     };
-  }, [selectedElements]); // 只依赖 selectedElements，不依赖 onTransformEnd
+  }, [selectedElements, allElements]); // 添加 allElements 依赖
 
   // 处理拖拽结束 - 通过 Transformer 或元素拖动
   const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
     console.log("Transformer handleDragEnd 触发", e.target);
+    if (onGuidesChange && onDragStateChange) {
+      onGuidesChange([]);
+      onDragStateChange(false);
+    }
+
     if (!onTransformEnd) return;
 
     const transformer = transformerRef.current;
@@ -100,6 +171,11 @@ export function KonvaTransformer({ selectedElements, onTransformEnd }: KonvaTran
   // 处理变换结束 - 缩放/旋转
   const handleTransformEnd = (_e: Konva.KonvaEventObject<DragEvent | MouseEvent | TouchEvent>) => {
     console.log("Transformer onTransformEnd 触发");
+    if (onGuidesChange && onDragStateChange) {
+      onGuidesChange([]);
+      onDragStateChange(false);
+    }
+
     if (!onTransformEnd) return;
 
     const transformer = transformerRef.current;
@@ -144,10 +220,73 @@ export function KonvaTransformer({ selectedElements, onTransformEnd }: KonvaTran
     return null;
   }
 
+  // 处理拖拽移动 - 实时计算对齐线
+  const handleDragMove = useCallback(() => {
+    console.log("Transformer handleDragMove 触发");
+    if (!onGuidesChange || !onDragStateChange || selectedElements.length !== 1) {
+      console.log("handleDragMove 条件不满足", {
+        hasOnGuidesChange: !!onGuidesChange,
+        hasOnDragStateChange: !!onDragStateChange,
+        selectedCount: selectedElements.length,
+      });
+      return;
+    }
+
+    const transformer = transformerRef.current;
+    if (!transformer) return;
+
+    const nodes = transformer.nodes();
+    if (nodes.length === 0) return;
+
+    const node = nodes[0];
+    const element = selectedElements[0];
+
+    console.log("计算对齐线 (from Transformer)", {
+      elementId: element.id,
+      nodeX: node.x(),
+      nodeY: node.y(),
+    });
+
+    // 创建临时元素对象用于计算对齐
+    const tempElement = {
+      ...element,
+      x: node.x(),
+      y: node.y(),
+    };
+
+    const { guides: newGuides, snappedPosition } = calculateSmartGuides(
+      tempElement,
+      allElements,
+      5 // 5px 吸附阈值
+    );
+
+    console.log("Transformer 计算结果", {
+      guidesCount: newGuides.length,
+      guides: newGuides,
+      snappedPosition,
+    });
+
+    // 应用吸附
+    if (snappedPosition.x !== undefined || snappedPosition.y !== undefined) {
+      console.log("应用吸附 (from Transformer)", snappedPosition);
+      if (snappedPosition.x !== undefined) {
+        node.x(snappedPosition.x);
+      }
+      if (snappedPosition.y !== undefined) {
+        node.y(snappedPosition.y);
+      }
+      node.getLayer()?.batchDraw();
+    }
+
+    onDragStateChange(true);
+    onGuidesChange(newGuides);
+  }, [selectedElements, allElements, onGuidesChange, onDragStateChange]);
+
   return (
     <Transformer
       ref={transformerRef}
       onDragEnd={handleDragEnd}
+      onDragMove={handleDragMove}
       onTransformEnd={handleTransformEnd}
       boundBoxFunc={(oldBox, newBox) => {
         // 限制最小尺寸

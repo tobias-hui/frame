@@ -40,6 +40,13 @@ export const KonvaElementRenderer = ({ element, isSelected, onSelect, onDoubleCl
     scaleY: element.scaleY ?? 1,
     opacity: element.opacity ?? 1,
     draggable: true,
+    // 拖动开始时自动选中元素
+    onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => {
+      e.cancelBubble = true;
+      if (!isSelected) {
+        onSelect();
+      }
+    },
     // 点击选中元素
     onClick: (e: Konva.KonvaEventObject<MouseEvent>) => {
       e.cancelBubble = true;
@@ -112,6 +119,12 @@ export const KonvaElementRenderer = ({ element, isSelected, onSelect, onDoubleCl
             scaleY={element.scaleY ?? 1}
             opacity={element.opacity ?? 1}
             draggable={true}
+            onDragStart={(e) => {
+              e.cancelBubble = true;
+              if (!isSelected) {
+                onSelect();
+              }
+            }}
             onClick={(e) => {
               e.cancelBubble = true;
               onSelect();
@@ -119,6 +132,14 @@ export const KonvaElementRenderer = ({ element, isSelected, onSelect, onDoubleCl
             onTap={(e) => {
               e.cancelBubble = true;
               onSelect();
+            }}
+            onDoubleClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
+              e.cancelBubble = true;
+              if (onDoubleClick) onDoubleClick();
+            }}
+            onDblClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
+              e.cancelBubble = true;
+              if (onDoubleClick) onDoubleClick();
             }}
           >
             {/* Text */}

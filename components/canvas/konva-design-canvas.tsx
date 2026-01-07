@@ -9,6 +9,8 @@ import { DomOverlayLayer } from "./dom-overlay-layer";
 import { KeyboardShortcutsPanel } from "./keyboard-shortcuts-panel";
 import { KonvaElementRenderer } from "./konva-element-renderer";
 import { KonvaTransformer } from "./konva-transformer";
+import { SmartGuides } from "./smart-guides";
+import { calculateSmartGuides } from "./smart-guides";
 
 interface KonvaDesignCanvasProps {
   className?: string;
@@ -22,6 +24,8 @@ export function KonvaDesignCanvas({ className }: KonvaDesignCanvasProps) {
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const [guides, setGuides] = useState<{ type: "vertical" | "horizontal"; position: number; range: [number, number] }[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [canvasSize, setCanvasSize] = useState<{
     width: number;
     height: number;
@@ -155,6 +159,12 @@ export function KonvaDesignCanvas({ className }: KonvaDesignCanvasProps) {
     },
     [getElement]
   );
+
+  // 清除对齐线
+  const clearGuides = useCallback(() => {
+    setGuides([]);
+    setIsDragging(false);
+  }, []);
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -295,8 +305,15 @@ export function KonvaDesignCanvas({ className }: KonvaDesignCanvasProps) {
               {/* Transformer - must be in the same layer as elements, after them */}
               <KonvaTransformer
                 selectedElements={selectedElements}
+                allElements={elements}
                 onTransformEnd={handleTransformEnd}
+                onGuidesChange={setGuides}
+                onDragStateChange={setIsDragging}
               />
+            </Layer>
+            {/* 对齐线层 - 必须在元素层之后，Transformer 之前 */}
+            <Layer listening={false}>
+              {isDragging && guides.length > 0 && <SmartGuides guides={guides} scale={1} />}
             </Layer>
           </Stage>
 
