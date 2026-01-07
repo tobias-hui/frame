@@ -1,24 +1,27 @@
 "use client";
 
 import type Konva from "konva";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Layer, Stage } from "react-konva";
 import { CANVAS_CONFIG, type CanvasElement, useCanvasStore } from "@/lib/store/canvas-store";
 import { ContextMenu } from "./context-menu";
 import { DomOverlayLayer } from "./dom-overlay-layer";
 import { KeyboardShortcutsPanel } from "./keyboard-shortcuts-panel";
 import { KonvaElementRenderer } from "./konva-element-renderer";
+import { KonvaTransformer } from "./konva-transformer";
 
 interface KonvaDesignCanvasProps {
   className?: string;
 }
 
 export function KonvaDesignCanvas({ className }: KonvaDesignCanvasProps) {
-  const { elements, selectedIds, setSelectedIds, updateElement } = useCanvasStore();
+  const { elements, selectedIds, setSelectedIds, updateElement, addElement, getElement } =
+    useCanvasStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState<{
     width: number;
     height: number;
@@ -64,14 +67,6 @@ export function KonvaDesignCanvas({ className }: KonvaDesignCanvasProps) {
     };
   }, []);
 
-  // Handle drag end
-  const handleDragEnd = useCallback(
-    (element: CanvasElement, x: number, y: number) => {
-      updateElement(element.id, { x, y });
-    },
-    [updateElement]
-  );
-
   // Handle click on canvas to deselect
   const handleStageClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -92,6 +87,73 @@ export function KonvaDesignCanvas({ className }: KonvaDesignCanvasProps) {
       }
     },
     [setSelectedIds]
+  );
+
+  // Handle drag over
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  // Handle drop on canvas
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+
+      try {
+        const elementTypeStr = e.dataTransfer.getData("elementType");
+        if (!elementTypeStr || !wrapperRef.current) return;
+
+        const elementType = JSON.parse(elementTypeStr);
+
+        // Get drop position relative to canvas
+        const rect = wrapperRef.current.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / canvasSize.scale;
+        const y = (e.clientY - rect.top) / canvasSize.scale;
+
+        // Add element at drop position
+        addElement({
+          type: elementType.type,
+          x: x - (elementType.defaultProps.width || 100) / 2,
+          y: y - (elementType.defaultProps.height || 100) / 2,
+          ...elementType.defaultProps,
+        });
+      } catch (error) {
+        console.error("Error handling drop:", error);
+      }
+    },
+    [canvasSize.scale, addElement]
+  );
+
+  // 获取选中的元素 - 使用 useMemo 稳定引用
+  const selectedElements = useMemo(
+    () =>
+      selectedIds
+        .map((id) => getElement(id))
+        .filter((el): el is CanvasElement => el !== undefined),
+    [selectedIds, getElement]
+  );
+
+  // 处理变换结束
+  const handleTransformEnd = useCallback(
+    (elementId: string, attrs: Partial<Konva.NodeConfig>) => {
+      updateElement(elementId, attrs);
+    },
+    [updateElement]
+  );
+
+  // 处理双击编辑文本
+  const handleDoubleClick = useCallback(
+    (elementId: string) => {
+      const element = getElement(elementId);
+      if (element?.type === "text") {
+        // 直接通过 DOM overlay 的 ref 来触发编辑
+        // 简化处理：使用 window 事件
+        const event = new CustomEvent("edit-text", { detail: { elementId } });
+        window.dispatchEvent(event);
+      }
+    },
+    [getElement]
   );
 
   // Handle keyboard shortcuts
@@ -178,7 +240,13 @@ export function KonvaDesignCanvas({ className }: KonvaDesignCanvasProps) {
       ref={containerRef}
       className={`relative h-full w-full overflow-auto bg-zinc-100 dark:bg-zinc-900 ${className}`}
     >
-      <div className="flex min-h-full items-center justify-center p-4 sm:p-8">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: Drop zone needs to be a div for layout */}
+      <div
+        ref={wrapperRef}
+        className="flex min-h-full items-center justify-center p-4 sm:p-8"
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         <div
           className="relative bg-white shadow-2xl dark:bg-zinc-800"
           style={{
@@ -220,10 +288,15 @@ export function KonvaDesignCanvas({ className }: KonvaDesignCanvasProps) {
                     element={element}
                     isSelected={selectedIds.includes(element.id)}
                     onSelect={() => setSelectedIds([element.id])}
-                    onDragEnd={handleDragEnd}
+                    onDoubleClick={() => handleDoubleClick(element.id)}
                   />
                 ))
               )}
+              {/* Transformer - must be in the same layer as elements, after them */}
+              <KonvaTransformer
+                selectedElements={selectedElements}
+                onTransformEnd={handleTransformEnd}
+              />
             </Layer>
           </Stage>
 

@@ -3,44 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type CanvasElement, useCanvasStore } from "@/lib/store/canvas-store";
-import { SelectionControls } from "./selection-controls";
 
 interface DomOverlayLayerProps {
   scale: number;
   containerRef?: React.RefObject<HTMLDivElement | null>;
-}
-
-interface OverlayElementProps {
-  element: CanvasElement;
-  onDoubleClick: (element: CanvasElement) => void;
-}
-
-function OverlayElement({ element, onDoubleClick }: OverlayElementProps) {
-  const rotation = element.rotation ?? 0;
-  const scaleX = element.scaleX ?? 1;
-  const scaleY = element.scaleY ?? 1;
-
-  const style: React.CSSProperties = {
-    position: "absolute",
-    left: `${element.x}px`,
-    top: `${element.y}px`,
-    width: `${element.width}px`,
-    height: `${element.height}px`,
-    transform: `rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`,
-    transformOrigin: "0 0",
-    pointerEvents: "auto",
-    cursor: "move",
-  };
-
-  return (
-    <button
-      type="button"
-      data-element-id={element.id}
-      style={style}
-      onDoubleClick={() => onDoubleClick(element)}
-      aria-label={`Element ${element.id}`}
-    />
-  );
 }
 
 export function DomOverlayLayer({ scale, containerRef }: DomOverlayLayerProps) {
@@ -55,13 +21,8 @@ export function DomOverlayLayer({ scale, containerRef }: DomOverlayLayerProps) {
   // Get the overlay container
   useEffect(() => {
     if (containerRef?.current) {
-      const overlayContainer = containerRef.current.querySelector('[data-dom-overlay="true"]');
-      if (overlayContainer) {
-        console.log("DOM overlay container found:", overlayContainer);
-        setContainer(overlayContainer as HTMLElement);
-      } else {
-        console.warn("DOM overlay container not found!");
-      }
+      // The ref itself is the overlay container (has data-dom-overlay="true" attribute)
+      setContainer(containerRef.current);
     }
   }, [containerRef]);
 
@@ -98,6 +59,23 @@ export function DomOverlayLayer({ scale, containerRef }: DomOverlayLayerProps) {
     }
   }, [editingElement]);
 
+  // 处理双击编辑文本 - 通过自定义事件
+  useEffect(() => {
+    const handleEditText = (e: Event) => {
+      const customEvent = e as CustomEvent<{ elementId: string }>;
+      const { elementId } = customEvent.detail;
+      const element = getElement(elementId);
+      if (element?.type === "text") {
+        setEditingElement({ element });
+      }
+    };
+
+    window.addEventListener("edit-text", handleEditText);
+    return () => {
+      window.removeEventListener("edit-text", handleEditText);
+    };
+  }, [getElement]);
+
   if (!container) {
     return null;
   }
@@ -105,17 +83,8 @@ export function DomOverlayLayer({ scale, containerRef }: DomOverlayLayerProps) {
   // Render overlay elements and controls into the DOM overlay container
   return createPortal(
     <>
-      {/* Render invisible overlay elements for moveable */}
-      {selectedElements.map((element) => (
-        <OverlayElement
-          key={element.id}
-          element={element}
-          onDoubleClick={handleOverlayDoubleClick}
-        />
-      ))}
-
-      {/* Selection Controls - Canva-style */}
-      <SelectionControls selectedElements={selectedElements} scale={scale} />
+      {/* 移除了 OverlayElement - 它们会拦截 Konva 的拖拽事件 */}
+      {/* 现在使用 Konva Transformer 处理选择和变换 */}
 
       {/* Text Editing Overlay */}
       {editingElement && (
